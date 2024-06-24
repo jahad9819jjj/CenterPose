@@ -32,6 +32,16 @@ class ModelWithLoss(torch.nn.Module):
 
 
 class BaseTrainer(object):
+    '''
+    以下の目的で実装されたAbstractクラス
+    * GPU対応の柔軟性
+    * 学習フローの一般化→異なるタスクや異なるモデルに対しても同じ学習の枠組みで共通化が可能
+        * 学習と検証の両方のエポックを実行 
+    * _get_losses, debug, save_resultなどを抽象メソッドで定義しておき、子クラスがタスク固有の実装を提供することができるようにしている
+    * 進捗管理とロギング
+    * メモリ管理
+    * 最適化とグラデーションクリッピング
+    '''
     def __init__(
             self, opt, model, optimizer=None):
         self.opt = opt
@@ -53,6 +63,7 @@ class BaseTrainer(object):
                     state[k] = v.to(device=device, non_blocking=True)
 
     def run_epoch(self, phase, epoch, data_loader):
+        # 学習と検証の両方に対応する実装
         model_with_loss = self.model_with_loss
         if phase == 'train':
             model_with_loss.train()
@@ -87,14 +98,19 @@ class BaseTrainer(object):
 
             output, loss, loss_stats, choice_list = model_with_loss(batch, phase)
             loss = loss.mean()  # No effect for our case
-            if phase == 'train':
+
+            if phase == 'train': # 学習時のみ最適化実行
+                # 各バッチの開始時に勾配を0にリセット
                 self.optimizer.zero_grad()
                 loss.backward()
 
+                # 勾配クリッピングを用いて勾配爆発を回避
                 if isinstance(self.model_with_loss, torch.nn.DataParallel):
                     torch.nn.utils.clip_grad_norm_(self.model_with_loss.module.model.parameters(), 100.)
                 else:
-                    torch.nn.utils.clip_grad_norm_(self.model_with_loss.model.parameters(), 100.)
+                    torch.nn.utils.clip_grad_norm_(self.model_with_loss.model.parameters(), 100.) 
+                    #最大ノルム(すべてのパラメータの勾配におけるL2ノルム)を100としている
+                    # sqrt(dx_0^2 + dx_1^2 + ... + dx_(N-1)^2)>100ならclippingがされる
 
                 self.optimizer.step()
             batch_time.update(time.time() - end)
@@ -121,7 +137,6 @@ class BaseTrainer(object):
             # Save everything for debug, including gt_hm/gt_hmhp/out_gt/out_pred/pred_hm/pred_hmhp/out_pred_gt_blend
             if phase == 'train':
                 # Only save the first sample to save space
-
                 # Debug only
                 # if opt.debug > 0 :
                 if opt.debug > 0 and iter_id == 0:

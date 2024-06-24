@@ -33,21 +33,35 @@ def create_model(arch, heads, head_conv, opt=None):
 
 def load_model(model, model_path, optimizer=None, resume=False,
                lr=None, lr_step=None):
+    '''
+    resume:学習再開ステップ
+    lr_step:学習率の変更ステップ
+    '''
+
+    # 開始エポックを0に設定し指定パスからチェックポイントをロード
+    # map_locationはデバイス不変のモデルとし、現在のデバイスにロードする(モデルがGPUで保存されたがCPUしか利用できない場合でもエラーなくロードできるようにする)
     start_epoch = 0
     checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
     print('loaded {}, epoch {}'.format(model_path, checkpoint['epoch']))
+
+    # WHY??
     state_dict_ = checkpoint['state_dict']
     state_dict = {}
 
     # convert data_parallal to model
     for k in state_dict_:
         if k.startswith('module') and not k.startswith('module_list'):
+            # "module."の文字列削除のため
+            # nn.DataParallelを使用してモデルを複数のGPUで学習するとモデルの各層の前に"module."が自動的に追加されるため
+            # 上の要因でもし複数GPUで学習したモデルを異なる環境にロードした場合に問題が発生する可能性がある
             state_dict[k[7:]] = state_dict_[k]
         else:
             state_dict[k] = state_dict_[k]
+    # get current model state dict
     model_state_dict = model.state_dict()
 
     # check loaded parameters and created model parameters
+    # サイズの不一致や欠落しているパラメタを確認するため
     msg = 'If you see this, your model does not fully load the ' + \
           'pre-trained weight. Please make sure ' + \
           'you have correctly specified --arch xxx ' + \

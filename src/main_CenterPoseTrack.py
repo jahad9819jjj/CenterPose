@@ -26,8 +26,10 @@ def main(opt):
     torch.manual_seed(opt.seed)
     torch.backends.cudnn.benchmark = not opt.not_cuda_benchmark and not opt.test
 
+    # 学習データセットの読み込み
     Dataset = ObjectPoseDataset
 
+    # 入力データセット設定の更新および出力ヘッドの設定
     opt = opts().update_dataset_info_and_set_heads(opt, Dataset)
     print(opt)
 
@@ -37,13 +39,16 @@ def main(opt):
     opt.device = torch.device('cuda' if opt.gpus[0] >= 0 else 'cpu')
 
     print('Creating model...')
+    # opts().update_dataset_info_and_set_headsにて設定したアーキテクチャでモデル作成
     model = create_model(opt.arch, opt.heads, opt.head_conv, opt=opt)
     optimizer = torch.optim.Adam(model.parameters(), opt.lr)
     start_epoch = 0
-    if opt.load_model != '':
+    if opt.load_model != '': #学習済モデルがある場合はロード
         model, optimizer, start_epoch = load_model(
             model, opt.load_model, optimizer, opt.resume, opt.lr, opt.lr_step)
 
+    # CenterPose/src/lib/trains/object_pose.pyのObjectPoseTrainer(opt, model, optimizer)をインスタンス化
+    # Factoryメソッドを用いている
     Trainer = train_factory[opt.task]
     trainer = Trainer(opt, model, optimizer)
     trainer.set_device(opt.gpus, opt.chunk_sizes, opt.device)

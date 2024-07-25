@@ -1,0 +1,25 @@
+defaults:
+  - _self_
+  - category: bottle
+  - method: centerpose_track
+
+# Objectron Dataset parameter
+dataset_root: /Volumes/SSD_USB/Dataset/Objectron/data/outf_all/bottle_train
+# Experiment parameter
+num_gpus: 1
+results_dir: /Volumes/SSD_USB/Results
+pretrained_model_path: /Volumes/SSD_USB/Results/hoge.pth
+randomseed: 777
+
+# Training parameter
+max_epoch: 1000
+batch_size: 2
+normalize: true
+num_workers: 4
+
+hydra:
+  run:
+    dir: ${results_dir}/checkpoints/${category.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: checkpoints
+    subdir: ${category.name}

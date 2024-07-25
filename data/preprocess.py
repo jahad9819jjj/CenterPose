@@ -149,11 +149,12 @@ def preprocess(annotation_file,category,opt):
 
 if __name__ == "__main__":
 
+    root_path = "/Volumes/SSD_USB/Dataset/Objectron/data"
     # User defined parameters
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--outf',
-        default = 'outf_all',
+        default = f'{root_path}/outf_all',
         help = "output filename inside output/"
     )
     parser.add_argument(
@@ -192,7 +193,6 @@ if __name__ == "__main__":
         help = "categories to be generated"
     )
     opt = parser.parse_args()
-
     # Todo: Hack some parameters here, should be commented if not using Pycharm but .sh instead
     # opt.debug = True
     # opt.test_flag = True
@@ -253,7 +253,7 @@ if __name__ == "__main__":
 
             for target in tqdm.tqdm(target_list):
                 print(target)
-                annotation_file = f"data/{c}/"+target.replace('/','_')+'.pbdata'
+                annotation_file = f"{root_path}/{c}/"+target.replace('/','_')+'.pbdata'
                 
                 
                 prefix = annotation_file[annotation_file.rfind('/')+1:annotation_file.rfind('.')] 

@@ -36,8 +36,9 @@ if __name__ == "__main__":
     )
     opt = parser.parse_args()
 
-    if not os.path.isdir('data/'):
-        subprocess.call(["mkdir",'data/'])
+    root_path = "/Volumes/SSD_USB/Objectron"
+    if not os.path.isdir(root_path):
+        subprocess.call(["mkdir",root_path])
     for c in opt.c:
         print(c)
         if not os.path.isdir(f'data/{c}'):
@@ -53,17 +54,17 @@ if __name__ == "__main__":
             annotation_filename = public_url + "/annotations/" + video_ids[i] + ".pbdata"
 
             # If the file has been downloaded, skip it
-            if os.path.exists(f"data/{c}/{video_ids[i].replace('/','_')}.pbdata"):
+            if os.path.exists(f"{root_path}/{c}/{video_ids[i].replace('/','_')}.pbdata"):
                 continue
 
             # video.content contains the video file.
             video = requests.get(video_filename)
             metadata = requests.get(metadata_filename)
             annotation = requests.get(annotation_filename)
-            file = open(f"data/{c}/{video_ids[i].replace('/','_')}.MOV", "wb")
+            file = open(f"{root_path}/{c}/{video_ids[i].replace('/','_')}.MOV", "wb")
             file.write(video.content)
-            file = open(f"data/{c}/{video_ids[i].replace('/','_')}_geometry.pbdata", "wb")
+            file = open(f"{root_path}/{c}/{video_ids[i].replace('/','_')}_geometry.pbdata", "wb")
             file.write(metadata.content)
-            file = open(f"data/{c}/{video_ids[i].replace('/','_')}.pbdata", "wb")
+            file = open(f"{root_path}/{c}/{video_ids[i].replace('/','_')}.pbdata", "wb")
             file.write(annotation.content)
             file.close()

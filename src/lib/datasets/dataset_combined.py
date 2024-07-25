@@ -9,6 +9,7 @@ from __future__ import print_function
 import torch.utils.data as data
 import numpy as np
 import json
+import copy
 import cv2
 import torch
 import os
@@ -28,7 +29,8 @@ from os.path import exists
 import glob
 from lib.opts import opts
 from lib.detectors.detector_factory import detector_factory
-
+from typing import List, Dict, Any, Optional, Tuple, Dict
+import time
 
 def rotation_y_matrix(theta):
     M_R = np.array([[np.cos(theta), 0, np.sin(theta), 0],
@@ -70,6 +72,9 @@ class ObjectPoseDataset(data.Dataset):
     # Not used yet
     # mu: x,y,z,x_normalized,z_normalized
     # std: x,y,z,x_normalized,z_normalized
+
+    # Maybe used at opts.py, then use calculating loss function
+    # Unknown: this meaning
     dimension_ref = {
         'bike': [[0.65320896, 1.021797894, 1.519635599, 0.6520559199, 1.506392621],
                  [0.1179380561, 0.176747817, 0.2981715678, 0.1667947895, 0.3830536275]],
@@ -106,18 +111,12 @@ class ObjectPoseDataset(data.Dataset):
 
     def __init__(self, opt, split):
         super(ObjectPoseDataset, self).__init__()
-        self.edges = [[2, 4], [2, 6], [6, 8], [4, 8],
-                      [1, 2], [3, 4], [5, 6], [7, 8],
-                      [1, 3], [1, 5], [3, 7], [5, 7]]
 
         # Todo: need to fix the path name
         if opt.tracking_task == True:
             self.data_dir = os.path.join(opt.data_dir, 'outf_all')
         else:
             self.data_dir = os.path.join(opt.data_dir, 'outf')
-
-        # # Debug only
-        # self.data_dir = os.path.join(opt.data_dir, 'outf_all_test')
 
         self.img_dir = os.path.join(self.data_dir, f"{opt.c}_{split}")
 
@@ -159,9 +158,9 @@ class ObjectPoseDataset(data.Dataset):
                 # Todo: path to be updated
                 # Path is related to the entry script
                 if opt_detector.c != 'bottle':
-                    opt_detector.load_model = f"../models/CenterPose/{opt_detector.c}_v1_140.pth"
+                    opt_detector.load_model = f"../models/poseest/{opt_detector.c}_v1_140.pth"
                 else:
-                    opt_detector.load_model = f"../models/CenterPose/bottle_v1_sym_12_140.pth"
+                    opt_detector.load_model = f"../models/poseest/bottle_v1_sym_12_140.pth"
                 self.detector = Detector_CenterPose(opt_detector)
             else:
                 # Two detectors for the cup category
@@ -231,6 +230,9 @@ class ObjectPoseDataset(data.Dataset):
         return self.num_samples
 
     def _get_border(self, border, size):
+        """
+        Calculation of the border value that determines how far inward from the edge of the image
+        """
         i = 1
         while size - border // i <= border // i:
             i *= 2
@@ -238,16 +240,19 @@ class ObjectPoseDataset(data.Dataset):
 
     # Add noise
     def _get_aug_param(self, c_ori, s, width, height, disturb=False):
+        """
+        center_offset, scaling_offset, rotation augmentation parameter
+        """
         c = c_ori.copy()
         if (not self.opt.not_rand_crop) and not disturb:
-            # Training for current frame
+            # Mostly used training of current frame
             aug_s = np.random.choice(np.arange(0.6, 1.4, 0.1))
             w_border = self._get_border(128, width)
             h_border = self._get_border(128, height)
             c[0] = np.random.randint(low=w_border, high=width - w_border)
             c[1] = np.random.randint(low=h_border, high=height - h_border)
         else:
-            # Training for previous frame
+            # Mostly used training of previous frame
             sf = self.opt.scale
             cf = self.opt.shift
 
@@ -264,18 +269,12 @@ class ObjectPoseDataset(data.Dataset):
 
         return c, aug_s, rot
 
-    def _trans_bbox(self, bbox, trans, width, height):
-        '''
-        Transform bounding boxes according to image crop.
-        '''
-        bbox = np.array(copy.deepcopy(bbox), dtype=np.float32)
-        bbox[:2] = affine_transform(bbox[:2], trans)
-        bbox[2:] = affine_transform(bbox[2:], trans)
-        bbox[[0, 2]] = np.clip(bbox[[0, 2]], 0, width - 1)
-        bbox[[1, 3]] = np.clip(bbox[[1, 3]], 0, height - 1)
-        return bbox
-
     def _get_input(self, img, trans_input):
+        """
+        Apply Affine matrix
+        PCA Color Augmentation Training mode AND Color Augmentation flag
+        Normalization
+        """
         inp = cv2.warpAffine(img, trans_input,
                              (self.opt.input_res, self.opt.input_res),
                              flags=cv2.INTER_LINEAR)
@@ -288,11 +287,9 @@ class ObjectPoseDataset(data.Dataset):
         return inp
 
     def __getitem__(self, index):
+        start = time.time()
         # # Debug only
-        # np.random.seed(100)
-
-        # <editor-fold desc="Data initialization">
-
+        np.random.seed(100)
         path_img, video_id, frame_id, path_json = self.images[index]
         img_path = path_img
         with open(path_json) as f:
@@ -325,36 +322,32 @@ class ObjectPoseDataset(data.Dataset):
         c_ori = np.array([img.shape[1] / 2., img.shape[0] / 2.], dtype=np.float32)
         s_ori = max(img.shape[0], img.shape[1]) * 1.0
         rot = 0
-
         flipped = False
+        dice_flip = (np.random.random()<self.opt.flip)
         if self.split == 'train':
-
-            c, aug_s, rot = self._get_aug_param(c_ori, s_ori, width, height, disturb=False)
-            s = s_ori * aug_s
-
-            if np.random.random() < self.opt.flip:
-                flipped = True
-                img = img[:, ::-1, :]
-
-                c[0] = width - c[0] - 1
+            aug_param_cur = {"center_point":c_ori, "scale":s_ori, "rot":rot, "disturb":False, "flipped":dice_flip}
+            img, trans_input, update_aug_param_cur = self.get_transformation_image(img, aug_param_cur, [self.opt.input_w, self.opt.input_h])
+            c = update_aug_param_cur["center_point"]
+            s = update_aug_param_cur["scale"]
+            rot = update_aug_param_cur["rot"]
         else:
+            trans_input = get_affine_transform(c_ori, s_ori, rot, [self.opt.input_w, self.opt.input_h])
             c = c_ori
             s = s_ori
 
-        trans_input = get_affine_transform(
-            c, s, rot, [self.opt.input_res, self.opt.input_res])
-
         try:
             inp = self._get_input(img, trans_input)
-        except:
+        except Exception as e:
+            print(e)
             return None
 
         output_res = self.opt.output_res
         num_joints = self.num_joints
+
+        # Get affine matrix following augmentation parameter and 128x128
         trans_output_rot = get_affine_transform(c, s, rot, [output_res, output_res])
 
         # Parameter initialization
-        # Set the rotational symmetry, will be varied according to the category
         if self.opt.c == 'chair':
             theta = 2 * np.pi / 4
             num_symmetry = 4
@@ -362,8 +355,7 @@ class ObjectPoseDataset(data.Dataset):
             num_symmetry = self.opt.num_symmetry
             theta = 2 * np.pi / num_symmetry
         else:
-            # No symmetry
-            num_symmetry = 1
+            num_symmetry = 1 # No symmetry
 
         # All the gt info:
         hm = np.zeros((num_symmetry, self.num_classes, output_res, output_res), dtype=np.float32)
@@ -396,15 +388,17 @@ class ObjectPoseDataset(data.Dataset):
         # Todo: Need updates if adding more modalities, however, it is not easy to be changed to dict
         gt_det_pad = np.zeros((num_symmetry, self.max_objs, 60), dtype=np.float32)
 
-        # </editor-fold>
-
-        # <editor-fold desc="Step1: Work on the previous frame">
+        ############## Previous Frame
         if self.opt.tracking_task == True:
 
             cts_pre_list = []
             track_ids = []
             pts_pre_list = []
             pts_mask_pre_list = []
+            
+            # No symmetry ambiguity in the previous frame
+            hm_pre = np.zeros((self.num_classes, self.opt.input_h, self.opt.input_w), dtype=np.float32)
+            hm_hp_pre = np.zeros((num_joints, self.opt.input_h, self.opt.input_w), dtype=np.float32)
 
             # Group info
             video_group = self.videos[video_id]
@@ -424,42 +418,31 @@ class ObjectPoseDataset(data.Dataset):
             rand_id = np.random.choice(len(img_ids))
             path_img_pre, video_id_pre, frame_id_pre, path_json_pre = img_ids[rand_id]
 
+            # Calculate ID difference btw current and previous frames
             frame_dist = abs(int(frame_id) - int(frame_id_pre))
 
             image_pre = cv2.imread(path_img_pre)
             with open(path_json_pre) as f:
                 anns_pre = json.load(f)
 
-            # Flip
-            if flipped:
-                image_pre = image_pre[:, ::-1, :].copy()
-                # c[0] = width - c[0] - 1 # Have been updated
-
             if self.opt.same_aug_pre and frame_dist != 0:
                 trans_input_pre = trans_input
-
-                # Not used yet
-                trans_output_rot_pre = trans_output_rot
-            else:
+            
+            else: # Augmentation constraint which is near current frame
                 # Keep the same rotation as the new one
-                c_pre, aug_s_pre, _ = self._get_aug_param(
-                    c_ori, s_ori, width, height, disturb=True)
-                s_pre = s_ori * aug_s_pre
-                trans_input_pre = get_affine_transform(
-                    c_pre, s_pre, rot, [self.opt.input_w, self.opt.input_h])
-
-                # Not used actually
-                trans_output_rot_pre = get_affine_transform(c_pre, s_pre, rot, [output_res, output_res])
-
+                aug_param_pre = {"center_point":c_ori, "scale":s_ori, "rot":rot, "disturb":True, "flipped":flipped}
+                image_pre, trans_input_pre, update_aug_param_pre = self.get_transformation_image(image_pre, 
+                                                                        aug_param_pre, 
+                                                                        model_inp_resolution=[self.opt.input_w, self.opt.input_h]
+                                                                        )
+                c_pre = update_aug_param_pre["center_point"]
+                s_pre = update_aug_param_pre["scale"]
             # Get img_pre
             try:
                 img_pre = self._get_input(image_pre, trans_input_pre)
             except:
                 return None
 
-            # No symmetry ambiguity in the previous frame
-            hm_pre = np.zeros((self.num_classes, self.opt.input_h, self.opt.input_w), dtype=np.float32)
-            hm_hp_pre = np.zeros((num_joints, self.opt.input_h, self.opt.input_w), dtype=np.float32)
 
             # 0: Noise simulation; 1: CenterPose as data generator
             data_generation_mode = 1 if np.random.random() < self.opt.data_generation_mode_ratio else 0
@@ -473,19 +456,18 @@ class ObjectPoseDataset(data.Dataset):
                 intrinsic[1, 2] = anns_pre['camera_data']['intrinsics']['cy']
 
                 # trans_input_pre: from raw input to processed input (e.g., 512);
-                # trans_output_rot_pre: from raw input to unscaled output (e.g., 128)
 
                 if self.opt.same_aug_pre and frame_dist != 0:
                     meta_inp = {'c': c, 's': s, 'height': height, 'width': width,
                                 'out_height': output_res, 'out_width': output_res,
                                 'inp_height': self.opt.input_h, 'inp_width': self.opt.input_w,
-                                'trans_input': trans_input_pre, 'trans_output': trans_output_rot_pre,
+                                'trans_input': trans_input_pre, # 'trans_output': trans_output_rot_pre,
                                 'camera_matrix': intrinsic}
                 else:
                     meta_inp = {'c': c_pre, 's': s_pre, 'height': height, 'width': width,
                                 'out_height': output_res, 'out_width': output_res,
                                 'inp_height': self.opt.input_h, 'inp_width': self.opt.input_w,
-                                'trans_input': trans_input_pre, 'trans_output': trans_output_rot_pre,
+                                'trans_input': trans_input_pre, # 'trans_output': trans_output_rot_pre,
                                 'camera_matrix': intrinsic}
 
                 # preprocessed_image : 3*512*512
@@ -549,24 +531,21 @@ class ObjectPoseDataset(data.Dataset):
                 match_detector = np.array(match_detector)
                 norms_list = np.array(norms_list)
 
-            # Todo: For convenience, always run noise simulation to get some info but may not use it if using CenterPose
-
             # Calculate some info
             cam_projection_matrix = anns_pre['camera_data']['camera_projection_matrix']
 
             id_symmetry_pre_list = []
             for idx_obj, ann_pre in enumerate(anns_pre['objects']):
 
-                # Todo: Only for chair category for now
                 if 'symmetric' in ann_pre:
                     if ann_pre['symmetric'] == 'True':
-                        num_symmetry = 4
+                        num_symmetry = 4 # This is considered for CHAIR
                     else:
                         num_symmetry = 1
 
                 if self.opt.c == 'cup':
-                    if (self.opt.mug == False and ann_pre['mug'] == True) or \
-                            self.opt.mug == True and ann_pre['mug'] == False:
+                    if (not self.opt.mug and ann_pre['mug']) or \
+                            (self.opt.mug and not ann_pre['mug'] ):
                         id_symmetry_pre_list.append(None)
                         continue
 
@@ -579,7 +558,9 @@ class ObjectPoseDataset(data.Dataset):
 
                 # Update later if successfully render a heat for the center
                 id_symmetry_pre_list.append(None)
-                # Update info if there exists symmetry
+
+                # REFACTOR.C1: Collaboration D1
+                # Update 2d projected point using 3d keypoint if rotation symmetry as projected_cuboid 
                 if num_symmetry != 1:
                     object_rotations = ann_pre['quaternion_xyzw']
                     object_translations = ann_pre['location']
@@ -676,18 +657,6 @@ class ObjectPoseDataset(data.Dataset):
                                 # Both need re-scale
                                 pts_detector[:, 0] = pts_detector[:, 0] * width
                                 pts_detector[:, 1] = pts_detector[:, 1] * height
-
-                                # Not used yet
-                                if self.opt.same_aug_pre and frame_dist != 0:
-                                    radius_detector = (np.array(
-                                        ret['boxes'][match_detector_idx][4]['kps_heatmap_std']).reshape(-1,
-                                                                                                        2) * aug_s).astype(
-                                        np.int32)
-                                else:
-                                    radius_detector = (np.array(
-                                        ret['boxes'][match_detector_idx][4]['kps_heatmap_std']).reshape(-1,
-                                                                                                        2) * aug_s_pre).astype(
-                                        np.int32)
 
                                 # For CenterPose, we directly use its heatmap height
                                 conf_hp_detector = np.array(ret['boxes'][match_detector_idx][4]['kps_heatmap_height'])
@@ -901,14 +870,12 @@ class ObjectPoseDataset(data.Dataset):
                                                     draw_umich_gaussian(hm_hp_pre[j], pts_detector_int, hp_radius,
                                                                         k=1)
                                                 elif self.opt.render_hmhp_mode == 0 or self.opt.render_hmhp_mode == 2:
+                                                    pass
                                                     # Sometimes, heatmap is missing
-                                                    if radius_detector[j, 0] > 0:
-                                                        # draw_nvidia_gaussian(hm_hp_pre[j], pts_detector_int,
-                                                        #                      radius_detector[j, :],
-                                                        #                      k=conf_hp_detector[j])
-                                                        draw_umich_gaussian(hm_hp_pre[j], pts_detector_int,
-                                                                            hp_radius,
-                                                                            k=conf_hp_detector[j])
+                                                    # if radius_detector[j, 0] > 0:
+                                                    #     draw_umich_gaussian(hm_hp_pre[j], pts_detector_int,
+                                                    #                         hp_radius,
+                                                    #                         k=conf_hp_detector[j])
 
                     # Collect all the results from the single one
                     pts_pre_list.append(pts_single_pre / self.opt.down_ratio)
@@ -953,7 +920,7 @@ class ObjectPoseDataset(data.Dataset):
 
         # </editor-fold>
 
-        # <editor-fold desc="Step2: Work on the current frame">
+        ############## Current frame
         cam_projection_matrix = anns['camera_data']['camera_projection_matrix']
         for k in range(num_objs):
             ann = anns['objects'][k]
@@ -978,6 +945,7 @@ class ObjectPoseDataset(data.Dataset):
             # Only apply rotation on gt annotation when symmetry exists
             for id_symmetry in range(num_symmetry):
 
+                # REFACTOR.D1 : Collaborate C1
                 if num_symmetry != 1:
 
                     if self.opt.tracking_task == True and self.opt.pre_hm_hp:
@@ -1017,6 +985,7 @@ class ObjectPoseDataset(data.Dataset):
                 # Change visibility, following the protocol of COCO
                 pts = np.zeros((len(pts_ori), 3), dtype='int64')
                 for idx, p in enumerate(pts_ori):
+                    # Labeling whether pts_ori is out of image or not.
                     if p[0] >= width or p[0] < 0 or p[1] < 0 or p[1] >= height:
                         pts[idx] = [p[0], p[1], 1]  # labeled but not visible
                     else:
@@ -1030,10 +999,12 @@ class ObjectPoseDataset(data.Dataset):
                         temp_0 = e[0] - 1
                         pts[temp_0], pts[temp_1] = pts[temp_1].copy(), pts[temp_0].copy()
 
+                # Bounding Box when applyed affine transform via 128x128
                 bbox = np.array(bounding_box_rotation(pts, trans_output_rot))
-
                 bbox = np.clip(bbox, 0, output_res - 1)
                 h, w = bbox[3] - bbox[1], bbox[2] - bbox[0]
+                rec = cv2.rectangle(copy.copy(img), (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (255, 0, 0), 2)
+                cv2.imwrite('./rectangle.png', rec)
 
                 # Filter out GT if most of the keypoints are not visible (more than 4)
                 visible_flag = True
@@ -1059,7 +1030,8 @@ class ObjectPoseDataset(data.Dataset):
                         if ct_int[0] >= output_res or ct_int[1] >= output_res or ct_int[0] < 0 or ct_int[1] < 0:
                             continue
 
-                    # Todo: Currently, normalized by y axis (up)
+                    # Todo: Currently, normalized by y axis (up), [x_float, 1, z_float]
+                    # Relative Cuboid
                     if self.opt.obj_scale:
                         if self.opt.use_absolute_scale:
                             scale[id_symmetry, k] = np.abs(ann['scale'])
@@ -1118,7 +1090,8 @@ class ObjectPoseDataset(data.Dataset):
 
                                 if self.opt.dense_hp:
                                     # Must be before draw center hm gaussian
-                                    draw_dense_reg(dense_kps[id_symmetry, j], hm[id_symmetry, cls_id], ct_int,
+                                    draw_dense_reg(dense_kps[id_symmetry, j], 
+                                                   hm[id_symmetry, cls_id], ct_int,
                                                    pts[j, :2] - ct_int, radius, is_offset=True)
                                     draw_gaussian(dense_kps_mask[id_symmetry, j], ct_int, radius)
                                 draw_gaussian(hm_hp[id_symmetry, j], pt_int, hp_radius)
@@ -1159,6 +1132,25 @@ class ObjectPoseDataset(data.Dataset):
         # </editor-fold>
 
         # <editor-fold desc="Update data record">
+        '''
+        "hm": center of object heatmap
+        "hm_hp": corner of object heatmap
+        "dense_hps": dense keypoint(bounding box)
+        "dense_hps_mask": dense keypoint(gaussian)
+        "hps": keypoint transition
+        "hps_mask": keypoint mask
+        "ind": ?
+        "wh": 2d bb size
+        "reg_mask" regression mask
+        "hp_offset": subpixel offset of keypoint
+        "hp_mask": keypoint mask?
+        "scale": relative cuboid dimension
+        "tracking": tracking information
+        "tracking_mask": tracking mask
+        "tracking_hp": keypoint tracking information
+        "tracking_hp_mask": keypoint tracking mask
+        '''
+
         ret = {'input': inp, 'hm': hm, 'reg_mask': reg_mask, 'ind': ind,
                'hps': kps, 'hps_mask': kps_mask}
         if self.opt.hps_uncertainty:
@@ -1203,5 +1195,41 @@ class ObjectPoseDataset(data.Dataset):
 
             ret['meta'] = meta
         # </editor-fold>
-
+        print(f'Elapsed : {time.time() - start}--------------')
         return ret
+
+
+    def get_transformation_image(self,
+                                image:np.ndarray, 
+                                augmentation_param:Dict, 
+                                model_inp_resolution:List,
+                                ):
+        """
+        augmentation_param(Dict): {"center_point":List,"scale":float, "rot":float, "disturb":bool, "flipped":bool}
+        """
+        height, width = image.shape[:2]
+        flipped = False
+
+        # Augmentation parameter from image
+        c_aug, s_aug, rot_aug = self._get_aug_param(
+            augmentation_param["center_point"],
+            augmentation_param["scale"],
+            width,
+            height,
+            disturb=augmentation_param["disturb"]
+        )
+        scale = augmentation_param["scale"] * s_aug
+        
+        if augmentation_param["flipped"]:
+            image = image[:, ::-1, :].copy()
+            c_aug[0] = width - c_aug[0] - 1
+            flipped=True
+
+        augmentation_param["center_point"] = c_aug
+        augmentation_param["scale"] = scale
+        augmentation_param["rot"] = rot_aug
+        augmentation_param["flipped"] = flipped
+
+        # Affine matrix from augmentation parameter 
+        trans = get_affine_transform(augmentation_param["center_point"], augmentation_param["scale"], augmentation_param["rot"], model_inp_resolution)
+        return image, trans, augmentation_param

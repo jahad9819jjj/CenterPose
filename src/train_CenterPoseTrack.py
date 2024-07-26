@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 def main(cfg):
     logger = logging.getLogger(__name__)
     datapath = pathlib.Path(cfg.dataset_root)
-    dataset = ObjectronDataset(cfg, datapath)
+    dataset = ObjectronDataset(cfg, datapath, 'train')
     dataloader = torch.utils.data.DataLoader(dataset, 
                             batch_size=cfg.batch_size,
                             shuffle=True, 

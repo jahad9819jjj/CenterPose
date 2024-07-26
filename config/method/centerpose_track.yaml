@@ -1,10 +1,23 @@
 centerpose_track:
-  method: centerpose_track
+  name: centerpose_track
   # Add any method-specific parameters here
   # 3D Bounding Box keypoint horizontally flip
+  #    8-----------4
+  #   /|          /|
+  #  / |         / |
+  # 7--|--------3  |
+  # |  |   ^z   |  |
+  # |  |   |    |  |
+  # |  |6  ◎->y |  |2
+  # | /         | /
+  # |/          |/
+  # 5-----------1
   flip_idx: [[1, 5], [3, 7], [2, 6], [4, 8]]
   input_res: 512
   output_res: 512
+  num_classes: 1
+  num_corners: 8
+  max_objs: 10
 
 # {0, 1} = {False, True}
 augmentation:
@@ -12,3 +25,6 @@ augmentation:
   crop_aug: 1
   flip_aug: 1
   rot_aug: 1
+  scale: 0.5
+  shift: 0.5
+  noise_aug: 0

@@ -326,6 +326,12 @@ class opts(object):
                                  help='use ground truth human joint local offset.')
         self.parser.add_argument('--eval_oracle_dep', action='store_true',
                                  help='use ground truth depth.')
+        
+        self.parser.add_argument('--num_classes', type=int, default=5,
+                                 help='number of object classes (default: 1)')
+        
+        self.parser.add_argument('--not_classification', action='store_true',
+                                 help='not use classification loss')
 
     def parse(self, opt):
         opt.gpus_str = opt.gpus
@@ -339,6 +345,9 @@ class opts(object):
         opt.reg_offset = not opt.not_reg_offset
         opt.reg_bbox = not opt.not_reg_bbox
         opt.hm_hp = not opt.not_hm_hp
+        
+        opt.classification = not opt.not_classification
+        
         opt.reg_hp_offset = (not opt.not_reg_hp_offset) and opt.hm_hp
 
         if opt.head_conv == -1:  # init default head_conv
@@ -378,7 +387,6 @@ class opts(object):
     def update_dataset_info_and_set_heads(self, opt, dataset):
         input_h, input_w = dataset.default_resolution
         opt.mean, opt.std = dataset.mean, dataset.std
-        opt.num_classes = dataset.num_classes
 
         input_h = opt.input_res if opt.input_res > 0 else input_h
         input_w = opt.input_res if opt.input_res > 0 else input_w
@@ -432,7 +440,7 @@ class opts(object):
         default_dataset_info = {
             'object_pose': {
                 'default_resolution': [512, 512],
-                'num_classes': 1,
+                'num_classes': opt.num_classes,
                 'mean': [0.408, 0.447, 0.470],
                 'std': [0.289, 0.274, 0.278],
                 'dataset': 'objectron',

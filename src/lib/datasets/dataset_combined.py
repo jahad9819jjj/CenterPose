@@ -54,7 +54,6 @@ def bounding_box_rotation(points, trans):
 
 
 class ObjectPoseDataset(data.Dataset):
-    num_classes = 1
     num_joints = 8
     default_resolution = [512, 512]
 
@@ -124,6 +123,7 @@ class ObjectPoseDataset(data.Dataset):
         if split == 'val' and not os.path.isdir(self.img_dir):
             self.img_dir = os.path.join(self.data_dir, f"{opt.c}_test")
 
+        self.num_classes = opt.num_classes
         self.max_objs = 10
         self._data_rng = np.random.RandomState(123)
         self._eig_val = np.array([0.2141788, 0.01817699, 0.00341571],
@@ -1194,6 +1194,10 @@ class ObjectPoseDataset(data.Dataset):
             meta = {'c': c, 's': s, 'gt_det': gt_det_pad, 'img_id': frame_id}
 
             ret['meta'] = meta
+            
+        self.opt.classification = True
+        if self.opt.classification:
+            ret.update({'cls_labels':anns['objects'][0]['class'] })
         # </editor-fold>
         print(f'Elapsed : {time.time() - start}--------------')
         return ret

@@ -488,6 +488,8 @@ class DLASeg(nn.Module):
                             [2 ** i for i in range(self.last_level - self.first_level)])
 
         self.heads = heads
+        self.heads['classification'] = opt.num_classes
+
         for head in self.heads:
             classes = self.heads[head]
             if head_conv > 0:
@@ -545,22 +547,26 @@ class DLASeg(nn.Module):
             if self.opt.tracking_task:
                 # Todo: We have not tried this idea yet
                 for head in self.heads:
-                    if head == 'tracking' or head == 'tracking_hp':
+                    if head == 'classification':
                         z[head] = self.__getattr__(head)(gru_outputs[0])
-                    if head == 'hm' or head == 'wh' or head == 'reg':
+                    if head == 'tracking' or head == 'tracking_hp':
                         z[head] = self.__getattr__(head)(gru_outputs[1])
-                    if head == 'hm_hp' or head == 'hp_offset' or head == 'hps' or head == 'hps_uncertainty':
+                    if head == 'hm' or head == 'wh' or head == 'reg':
                         z[head] = self.__getattr__(head)(gru_outputs[2])
-                    if head == 'scale' or head == 'scale_uncertainty':
+                    if head == 'hm_hp' or head == 'hp_offset' or head == 'hps' or head == 'hps_uncertainty':
                         z[head] = self.__getattr__(head)(gru_outputs[3])
+                    if head == 'scale' or head == 'scale_uncertainty':
+                        z[head] = self.__getattr__(head)(gru_outputs[4])
             else:
                 for head in self.heads:
-                    if head == 'hm' or head == 'wh' or head == 'reg':
+                    if head == 'classification':
                         z[head] = self.__getattr__(head)(gru_outputs[0])
-                    if head == 'hm_hp' or head == 'hp_offset' or head == 'hps':
+                    if head == 'hm' or head == 'wh' or head == 'reg':
                         z[head] = self.__getattr__(head)(gru_outputs[1])
-                    if head == 'scale':
+                    if head == 'hm_hp' or head == 'hp_offset' or head == 'hps':
                         z[head] = self.__getattr__(head)(gru_outputs[2])
+                    if head == 'scale':
+                        z[head] = self.__getattr__(head)(gru_outputs[3])
 
             return [z]
         else:
@@ -581,10 +587,14 @@ def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4, opt=None):
 
 # v1
 def get_dla_dcn_convGRU(num_layers, heads, head_conv=256, down_ratio=4, opt=None):
-    model = DLASeg('dla{}'.format(num_layers), heads,
+    model = DLASeg('dla{}'.format(num_layers), 
+                   heads,
                    pretrained=True,
                    down_ratio=down_ratio,
                    final_kernel=1,
                    last_level=5,
-                   head_conv=head_conv, use_convGRU=True, opt=opt)
+                   head_conv=head_conv, 
+                   use_convGRU=True, 
+                   opt=opt
+                   )
     return model

@@ -38,6 +38,8 @@ class ObjectPoseLoss(torch.nn.Module):
             RegLoss() if opt.reg_loss == 'sl1' else None
 
         self.crit_reg_uncertainty = RegKLDScaleLoss()
+        
+        self.crit_cls = torch.nn.CrossEntropyLoss()
 
         self.opt = opt
 
@@ -57,10 +59,16 @@ class ObjectPoseLoss(torch.nn.Module):
         obj_scale_loss = 0
         tracking_loss = 0
         tracking_hp_loss = 0
+        cls_loss = 0
 
         for s in range(opt.num_stacks):
             output = outputs[s]
             output['hm'] = _sigmoid(output['hm'])
+            
+            if opt.classification and opt.cls_weight > 0:
+                cls_loss += self.crit_cls(output['classification'], 
+                                        batch['cls_labels']) / opt.num_stacks
+            
             if opt.hm_hp and not opt.mse_loss:
                 output['hm_hp'] = _sigmoid(output['hm_hp'])
 
@@ -153,7 +161,8 @@ class ObjectPoseLoss(torch.nn.Module):
                opt.hm_hp_weight * hm_hp_loss + opt.off_weight * hp_offset_loss + \
                opt.obj_scale_weight * obj_scale_loss + \
                opt.tracking_weight * tracking_loss + \
-               opt.tracking_hp_weight * tracking_hp_loss
+               opt.tracking_hp_weight * tracking_hp_loss + \
+               opt.cls_weight * cls_loss
 
         # Calculate the valid_mask where samples are valid
         valid_mask = torch.gt(batch['ind'].sum(dim=2), 0)
@@ -182,19 +191,25 @@ class ObjectPoseLoss(torch.nn.Module):
         if opt.tracking_hp and opt.tracking_hp_weight > 0:
             tracking_hp_loss = torch.stack(
                 [tracking_hp_loss[idx][choice] for idx, choice in enumerate(choice_list)]).mean()
+            
+        if opt.classification and opt.cls_weight > 0:
+            cls_loss = torch.stack([cls_loss[idx][choice] for idx, choice in enumerate(choice_list)]).mean()
+    
 
         loss = opt.hm_weight * hm_loss + opt.wh_weight * wh_loss + \
                opt.off_weight * off_loss + opt.hp_weight * hp_loss + \
                opt.hm_hp_weight * hm_hp_loss + opt.off_weight * hp_offset_loss + \
                opt.obj_scale_weight * obj_scale_loss + \
                opt.tracking_weight * tracking_loss + \
-               opt.tracking_hp_weight * tracking_hp_loss
+               opt.tracking_hp_weight * tracking_hp_loss + \
+               opt.cls_weight * cls_loss
 
         loss_stats = {'loss': loss, 'hm_loss': hm_loss, 'hp_loss': hp_loss,
                       'hm_hp_loss': hm_hp_loss, 'hp_offset_loss': hp_offset_loss,
                       'wh_loss': wh_loss, 'off_loss': off_loss, 'obj_scale_loss': obj_scale_loss,
                       'tracking_loss': tracking_loss,
                       'tracking_hp_loss': tracking_hp_loss,
+                      'cls_loss': cls_loss
                       }
 
         # Fix the bug in multi gpus
@@ -211,7 +226,8 @@ class ObjectPoseTrainer(BaseTrainer):
 
     def _get_losses(self, opt):
         loss_states = ['loss', 'hm_loss', 'hp_loss', 'hm_hp_loss',
-                       'hp_offset_loss', 'wh_loss', 'off_loss', 'obj_scale_loss', 'tracking_loss', 'tracking_hp_loss']
+                       'hp_offset_loss', 'wh_loss', 'off_loss', 'obj_scale_loss', 'tracking_loss', 'tracking_hp_loss',
+                       'cls_loss']
         loss = ObjectPoseLoss(opt)
         return loss_states, loss
 

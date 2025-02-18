@@ -529,14 +529,22 @@ class DLASeg(nn.Module):
 
         # x = self.base(x)
         x = self.dla_up(x)
+        # 0  :  torch.Size([2, 64, 128, 128])
+        # 1  :  torch.Size([2, 128, 64, 64])
+        # 2  :  torch.Size([2, 256, 32, 32])
+        # 3  :  torch.Size([2, 512, 16, 16])
 
         y = []
         for i in range(self.last_level - self.first_level):
             y.append(x[i].clone())
+        # 0  :  torch.Size([2, 64, 128, 128])
+        # 1  :  torch.Size([2, 128, 64, 64])
+        # 2  :  torch.Size([2, 256, 32, 32])
         self.ida_up(y, 0, len(y))
 
         z = {}
 
+        # y[-1] = torch.Size([2, 64, 128, 128])
         # Feature association
 
         if self.use_convGRU == True:
